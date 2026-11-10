@@ -1,0 +1,1 @@
+{"name":"omniqr-studio","version":"1.0.0","private":true,"scripts":{"build:css":"tailwindcss -i ./src/input.css -o ./app/static/css/tailwind.css --minify","qa:screens":"node tools/qa_screens.mjs"},"devDependencies":{"playwright":"^1.56.1","tailwindcss":"^3.4.17"}}

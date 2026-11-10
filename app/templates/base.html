@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f5f0e6" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#18231f" media="(prefers-color-scheme: dark)">
+  <meta name="description" content="OmniQR Studio ile gizliliğinizi koruyarak QR kodlarınızı tasarlayın."><meta name="color-scheme" content="light dark">
+  <meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-status-bar-style" content="default"><meta name="apple-mobile-web-app-title" content="OmniQR">
+  <meta property="og:type" content="website"><meta property="og:site_name" content="OmniQR Studio"><meta property="og:title" content="OmniQR Studio — QR kod atölyeniz"><meta property="og:description" content="Gizlilik odaklı, baskı provası estetiğinde QR atölyesi."><meta property="og:image" content="/static/og-card.png">
+  <meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="OmniQR Studio"><meta name="twitter:description" content="A private QR print workshop."><meta name="twitter:image" content="/static/og-card.png">
+  <title>OmniQR Studio — QR kod atölyeniz</title><link rel="canonical" href="/">
+  <link rel="preload" as="image" href="/static/brand/logo-mark.png"><link rel="manifest" href="/manifest.webmanifest"><link rel="icon" href="/favicon.ico" sizes="any"><link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="/static/css/tailwind.css"><link rel="stylesheet" href="/static/css/app.css"><link rel="stylesheet" href="/static/css/premium.css">
+  {% if request.path == '/offline' %}<script type="module" src="/static/js/offline.js"></script>{% else %}<script type="module" src="/static/js/app.js"></script>{% endif %}
+</head>
+<body>{% block content %}{% endblock %}</body>
+</html>

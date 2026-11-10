@@ -1,0 +1,64 @@
+{
+  "id": "/",
+  "name": "OmniQR Studio — QR kod atölyeniz",
+  "short_name": "OmniQR",
+  "description": "Gizlilik odaklı QR kod atölyesi",
+  "lang": "tr",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f5f0e6",
+  "theme_color": "#f5f0e6",
+  "categories": [
+    "utilities",
+    "productivity"
+  ],
+  "icons": [
+    {
+      "src": "/static/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/static/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/static/icons/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "/static/screenshots/mobile.jpg",
+      "sizes": "390x5155",
+      "type": "image/jpeg",
+      "form_factor": "narrow",
+      "label": "Mobile OmniQR Studio"
+    },
+    {
+      "src": "/static/screenshots/desktop.jpg",
+      "sizes": "1536x3773",
+      "type": "image/jpeg",
+      "form_factor": "wide",
+      "label": "OmniQR Studio desktop"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Yeni QR",
+      "short_name": "Yeni",
+      "url": "/"
+    },
+    {
+      "name": "Wi-Fi QR",
+      "short_name": "Wi-Fi",
+      "url": "/?type=wifi"
+    }
+  ]
+}
