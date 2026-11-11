@@ -28,8 +28,9 @@ def build_payload(kind: str, data: dict) -> str:
     if kind == "vcard":
         if not d.get("name"):
             raise ValueError("MISSING_NAME")
-        name = d["name"].replace(";", "\\;").replace(",", "\\,")
-        return "BEGIN:VCARD\nVERSION:3.0\nFN:" + name + (f"\nTEL:{d['phone']}" if d.get("phone") else "") + (f"\nEMAIL:{d['email']}" if d.get("email") else "") + "\nEND:VCARD"
+        escape = lambda value: value.replace("\\", "\\\\").replace("\r\n", "\n").replace("\r", "\n").replace("\n", "\\n").replace(";", "\\;").replace(",", "\\,")
+        name = escape(d["name"])
+        return "BEGIN:VCARD\nVERSION:3.0\nFN:" + name + (f"\nTEL:{escape(d['phone'])}" if d.get("phone") else "") + (f"\nEMAIL:{escape(d['email'])}" if d.get("email") else "") + "\nEND:VCARD"
     if kind == "email":
         if not d.get("to"):
             raise ValueError("MISSING_EMAIL")

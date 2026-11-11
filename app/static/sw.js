@@ -1,4 +1,4 @@
-const CACHE='omniqr-shell-v6';
+const CACHE='omniqr-shell-v7';
 const SHELL=['/','/offline','/manifest.webmanifest','/favicon.ico','/static/css/app.css','/static/css/premium.css','/static/css/tailwind.css','/static/js/app.js','/static/js/offline.js','/static/i18n/tr.json','/static/i18n/en.json','/static/brand/logo-mark.png','/static/brand/logo-mark-mono.png','/static/brand/logo-mark-light.png','/static/icons/icon-192.png','/static/icons/icon-512.png','/static/icons/icon-maskable-512.png','/static/icons/apple-touch-icon.png','/static/og-card.png','/static/screenshots/mobile.jpg','/static/screenshots/desktop.jpg'];
 self.addEventListener('install',event=>event.waitUntil(caches.open(CACHE).then(c=>c.addAll(SHELL))));
 self.addEventListener('message',event=>{if(event.data?.type==='SKIP_WAITING')self.skipWaiting();});

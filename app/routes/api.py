@@ -5,7 +5,7 @@ from io import BytesIO
 
 from flask import Blueprint, jsonify, request, send_file
 
-from app.services.exporters import export_qr
+from app.services.exporters import MAX_EXPORT_BYTES, export_qr
 from app.services.payloads import build_payload
 from app.services.qr_engine import render_qr
 from app.services.validators import MAX_PAYLOAD_LENGTH, validate_payload
@@ -42,7 +42,9 @@ def generate():
     try:
         payload = body.get("payload") or build_payload(body.get("type", "text"), body.get("data", {}))
         validate_payload(payload)
-        image, version, modules = render_qr(payload, body.get("foreground", "#193a32"), body.get("background", "#f5f0e6"), body.get("correction", "M"), body.get("shape", "square"), int(body.get("border", 4)), int(body.get("size", 10)))
+        image, version, modules = render_qr(payload, body.get("foreground", "#2a1f1b"), body.get("background", "#f5f0e6"), body.get("correction", "M"), body.get("shape", "square"), int(body.get("border", 4)), int(body.get("size", 10)))
+        if len(image) > MAX_EXPORT_BYTES:
+            raise ValueError("EXPORT_TOO_LARGE")
     except (ValueError, TypeError) as exc:
         return error(input_code(exc))
     return jsonify({"image": base64.b64encode(image).decode("ascii"), "mime": "image/png", "version": version, "modules": modules, "payload_length": len(payload), "hints": ["HIGH_DENSITY"] if version >= 8 else []})
@@ -70,7 +72,7 @@ def export():
         payload = body.get("payload") or build_payload(body.get("type", "text"), body.get("data", {}))
         output, mime, extension = export_qr(
             payload,
-            body.get("foreground", "#193a32"),
+            body.get("foreground", "#2a1f1b"),
             body.get("background", "#f5f0e6"),
             body.get("correction", "M"),
             body.get("shape", "square"),

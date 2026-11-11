@@ -29,7 +29,7 @@ def _rgb(color: str) -> tuple[int, int, int]:
 
 
 @lru_cache(maxsize=96)
-def render_qr(payload: str, foreground: str = "#193a32", background: str = "#f5f0e6", correction: str = "M", shape: str = "square", border: int = 4, size: int = 10) -> tuple[bytes, int, int]:
+def render_qr(payload: str, foreground: str = "#2a1f1b", background: str = "#f5f0e6", correction: str = "M", shape: str = "square", border: int = 4, size: int = 10) -> tuple[bytes, int, int]:
     """Render a bounded PNG and return bytes, version, and module count."""
     validate_payload(payload)
     validate_colors(foreground, background)

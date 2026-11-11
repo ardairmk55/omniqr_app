@@ -2,7 +2,10 @@ const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const TYPES = ['url', 'text', 'wifi', 'vcard', 'email', 'phone', 'sms', 'whatsapp', 'geo', 'event', 'social'];
 const initialType = new URLSearchParams(location.search).get('type');
-const state = { type: TYPES.includes(initialType) ? initialType : 'url', lang: localStorage.getItem('omniqr-lang'), image: '' };
+function loadSession() { try { return JSON.parse(localStorage.getItem('omniqr-generator-session') || '{}'); } catch { return {}; } }
+const session = loadSession();
+if (session.forms?.wifi) delete session.forms.wifi.password;
+const state = { type: TYPES.includes(initialType) ? initialType : TYPES.includes(session.type) ? session.type : 'url', lang: localStorage.getItem('omniqr-lang'), image: '', forms: session.forms || {}, appearance: session.appearance || {}, wifiPassword: '' };
 const fieldsByType = {
   url: [['value', 'labelValue', 'url']], text: [['value', 'labelText', 'textarea']],
   wifi: [['ssid', 'labelSsid', 'text'], ['password', 'labelPassword', 'password'], ['security', 'labelSecurity', 'select']],
@@ -17,6 +20,7 @@ const fieldsByType = {
 let dict = {};
 let timer;
 let activeRequest;
+let requestSequence = 0;
 let installPrompt;
 let scrollPosition = 0;
 let menuHistoryState = false;
@@ -29,8 +33,7 @@ function updateAriaAndAlts() {
   $$('[data-language]').forEach((button) => button.setAttribute('aria-pressed', String(button.dataset.language === state.lang)));
 }
 async function setLanguage(lang) {
-  const previous = {};
-  new FormData($('#qr-form')).forEach((value, key) => { previous[key] = value; });
+  captureCurrentForm();
   state.lang = lang;
   localStorage.setItem('omniqr-lang', lang);
   dict = await (await fetch(`/static/i18n/${lang}.json`)).json();
@@ -42,12 +45,12 @@ async function setLanguage(lang) {
   $$('[data-i18n]').forEach((element) => { const value = dict[element.dataset.i18n]; if (value !== undefined) element.innerHTML = value; });
   updateAriaAndAlts();
   renderFields();
-  Object.entries(previous).forEach(([key, value]) => { const field = $(`#fields [name="${CSS.escape(key)}"]`); if (field) { if (field.type === 'checkbox') field.checked = value === 'true'; else field.value = value; } });
+  restoreCurrentForm();
 }
 function fieldHTML([key, translation, type]) {
   const label = dict[translation] || translation;
   let input;
-  if (key === 'security') input = `<select name="${key}" aria-label="${label}"><option value="WPA">WPA / WPA2</option><option value="WEP">WEP</option><option value="nopass">${dict.securityOpen}</option></select>`;
+  if (key === 'security') input = `<select name="${key}" aria-label="${label}"><option value="WPA">${dict.securityWpa}</option><option value="WEP">${dict.securityWep}</option><option value="nopass">${dict.securityOpen}</option></select>`;
   else if (type === 'textarea') input = `<textarea name="${key}" aria-label="${label}" rows="3" maxlength="1800" placeholder="${dict.placeholderMessage || ''}" ${key === 'value' ? 'required' : ''} autocapitalize="sentences" enterkeyhint="done"></textarea>`;
   else {
     const required = ['value', 'ssid', 'name', 'to', 'phone', 'lat', 'lng', 'title'].includes(key) ? 'required' : '';
@@ -65,6 +68,7 @@ function renderFields() {
     + (state.type === 'wifi' ? `<label class="check-field"><input type="checkbox" name="hidden" value="true"><span>${dict.labelHidden}</span></label>` : '')
     + (state.type === 'geo' ? `<button type="button" class="text-button location-button" id="locate">⌖ ${dict.getLocation}</button>` : '');
   $$('input,textarea,select', $('#fields')).forEach((element) => element.addEventListener('input', schedule));
+  restoreCurrentForm();
   const locate = $('#locate');
   if (locate) locate.onclick = () => navigator.geolocation?.getCurrentPosition((position) => {
     $('#fields [name=lat]').value = position.coords.latitude.toFixed(6);
@@ -79,7 +83,82 @@ function collect() {
   if (hidden) data.hidden = hidden.checked ? 'true' : 'false';
   return data;
 }
-function schedule() { clearTimeout(timer); timer = setTimeout(generate, 220); }
+function captureCurrentForm() {
+  if (!$('#fields')?.querySelector('[name]')) return;
+  const data = collect();
+  if (state.type === 'wifi') { state.wifiPassword = data.password || ''; delete data.password; }
+  state.forms[state.type] = data;
+}
+function restoreCurrentForm() {
+  const saved = state.forms[state.type] || {};
+  Object.entries(saved).forEach(([key, value]) => {
+    if (state.type === 'wifi' && key === 'password') return;
+    const field = $(`#fields [name="${CSS.escape(key)}"]`);
+    if (field) { if (field.type === 'checkbox') field.checked = value === true || value === 'true'; else field.value = value; }
+  });
+  if (state.type === 'wifi' && $('#fields [name="password"]')) $('#fields [name="password"]').value = state.wifiPassword;
+}
+function saveSession() {
+  captureCurrentForm();
+  if (state.forms.wifi) delete state.forms.wifi.password;
+  const appearance = Object.fromEntries(['foreground', 'background', 'shape', 'correction', 'border', 'resolution'].map((id) => [id, $(`#${id}`).value]));
+  state.appearance = appearance;
+  localStorage.setItem('omniqr-generator-session', JSON.stringify({ type: state.type, forms: state.forms, appearance }));
+}
+function scrubFavoriteWifiPasswords() {
+  try {
+    const favorites = JSON.parse(localStorage.getItem('omniqr-favorites') || '[]');
+    let changed = false;
+    favorites.forEach((favorite) => {
+      if (favorite?.type === 'wifi' && favorite.data && Object.hasOwn(favorite.data, 'password')) { delete favorite.data.password; changed = true; }
+    });
+    if (changed) localStorage.setItem('omniqr-favorites', JSON.stringify(favorites));
+  } catch { /* malformed favorites are left for the existing UI fallback */ }
+}
+function schedule() { saveSession(); clearTimeout(timer); timer = setTimeout(generate, 300); }
+function payloadFor(data, type = state.type) {
+  const clean = (key) => String(data[key] ?? '').trim();
+  if (['url', 'text', 'social'].includes(type)) {
+    if (!clean('value')) return { error: 'MISSING_VALUE' };
+    if (type === 'text') return { payload: clean('value') };
+    const value = clean('value');
+    try { const url = new URL(value.includes('://') ? value : `https://${value}`); if (!url.hostname.includes('.')) return { error: 'MISSING_VALUE' }; return { payload: url.href }; } catch { return { error: 'MISSING_VALUE' }; }
+  }
+  if (type === 'wifi') {
+    if (!clean('ssid')) return { error: 'MISSING_SSID' };
+    const esc = (value) => String(value ?? '').replaceAll('\\', '\\\\').replaceAll(';', '\\;').replaceAll(',', '\\,').replaceAll(':', '\\:').replaceAll('"', '\\"');
+    return { payload: `WIFI:T:${clean('security') || 'WPA'};S:${esc(clean('ssid'))};P:${esc(data.password ?? '')};H:${data.hidden === true || data.hidden === 'true' ? 'true' : 'false'};;` };
+  }
+  if (type === 'vcard') {
+    if (!clean('name')) return { error: 'MISSING_NAME' };
+    if (clean('email') && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clean('email'))) return { error: 'INVALID_EMAIL' };
+    if (clean('phone') && !/^\+?[\d ().-]{5,24}$/.test(clean('phone'))) return { error: 'INVALID_PHONE' };
+    const escape = (value) => String(value).replaceAll('\\', '\\\\').replaceAll('\r\n', '\n').replaceAll('\r', '\n').replaceAll('\n', '\\n').replaceAll(';', '\\;').replaceAll(',', '\\,');
+    return { payload: `BEGIN:VCARD\nVERSION:3.0\nFN:${escape(clean('name'))}${clean('phone') ? `\nTEL:${escape(clean('phone'))}` : ''}${clean('email') ? `\nEMAIL:${escape(clean('email'))}` : ''}\nEND:VCARD` };
+  }
+  if (type === 'email') {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clean('to'))) return { error: 'MISSING_EMAIL' };
+    const params = new URLSearchParams({ subject: clean('subject'), body: clean('body') });
+    return { payload: `mailto:${clean('to')}?${params}` };
+  }
+  if (type === 'phone') return /^\+?[\d ().-]{5,24}$/.test(clean('value')) ? { payload: `tel:${clean('value')}` } : { error: 'MISSING_PHONE' };
+  if (type === 'sms') return /^\+?[\d ().-]{5,24}$/.test(clean('phone')) ? { payload: `SMSTO:${clean('phone')}:${clean('message')}` } : { error: 'MISSING_PHONE' };
+  if (type === 'whatsapp') { const number = clean('phone').replace(/\D/g, ''); return number.length >= 7 ? { payload: `https://wa.me/${number}${clean('message') ? `?text=${encodeURIComponent(clean('message'))}` : ''}` } : { error: 'MISSING_PHONE' }; }
+  if (type === 'geo') { if (!clean('lat') || !clean('lng')) return { error: 'INVALID_COORDINATES' }; const lat = Number(clean('lat')); const lng = Number(clean('lng')); return Number.isFinite(lat) && Number.isFinite(lng) && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180 ? { payload: `geo:${lat},${lng}` } : { error: 'INVALID_COORDINATES' }; }
+  if (type === 'event') {
+    const start = new Date(clean('start')); const end = new Date(clean('end'));
+    if (!clean('title') || !Number.isFinite(start.valueOf()) || !Number.isFinite(end.valueOf()) || end <= start) return { error: 'MISSING_EVENT_FIELDS' };
+    const fmt = (value) => value.replaceAll('-', '').replaceAll(':', '') + (value.length === 16 ? '00' : '');
+    const title = clean('title').replaceAll('\\', '\\\\').replaceAll(',', '\\,').replaceAll(';', '\\;').replaceAll('\n', '\\n');
+    return { payload: `BEGIN:VCALENDAR\nVERSION:2.0\nBEGIN:VEVENT\nSUMMARY:${title}\nDTSTART:${fmt(clean('start'))}\nDTEND:${fmt(clean('end'))}\nEND:VEVENT\nEND:VCALENDAR` };
+  }
+  return { error: 'INVALID_TYPE' };
+}
+function errorMessage(code) {
+  const key = ({ MISSING_VALUE: 'errMissingValue', MISSING_SSID: 'errMissingSSID', MISSING_EMAIL: 'errMissingEmail', INVALID_EMAIL: 'errMissingEmail', MISSING_PHONE: 'errMissingPhone', INVALID_PHONE: 'errMissingPhone', MISSING_NAME: 'errMissingName', INVALID_COORDINATES: 'errCoordinates', MISSING_EVENT_FIELDS: 'errEvent', PAYLOAD_TOO_LONG: 'errTooLong', EXPORT_TOO_LARGE: 'errExportSize', INVALID_SECURITY: 'errInvalidInput', INVALID_OPTIONS: 'errInvalidInput', INVALID_TYPE: 'errInvalidInput', INVALID_COLOR: 'errInvalidColor', INVALID_FORMAT: 'errUnsupportedFormat', INVALID_RESOLUTION: 'errInvalidResolution', CROSS_ORIGIN_DENIED: 'errInvalidInput', RATE_LIMITED: 'errRateLimit', OFFLINE: 'errOffline' })[code] || 'error';
+  return dict[key] || dict.error;
+}
+function payloadError(validation) { return validation.error || (new TextEncoder().encode(validation.payload || '').length > 1800 ? 'PAYLOAD_TOO_LONG' : ''); }
 function luminance(hex) {
   const channels = [1, 3, 5].map((index) => parseInt(hex.slice(index, index + 2), 16) / 255)
     .map((channel) => channel <= .04045 ? channel / 12.92 : ((channel + .055) / 1.055) ** 2.4);
@@ -90,31 +169,57 @@ function contrastRatio(foreground, background) {
   return (Math.max(a, b) + .05) / (Math.min(a, b) + .05);
 }
 async function generate() {
-  activeRequest?.abort(); activeRequest = new AbortController();
-  $('#qr-skeleton').classList.add('visible'); $('#qr-image').classList.remove('ready');
+  clearTimeout(timer);
+  const data = collect(); const validation = payloadFor(data);
+  activeRequest?.abort();
+  const sequence = ++requestSequence;
+  const image = $('#qr-image'); const pending = $('#qr-pending'); const skeleton = $('#qr-skeleton');
+  if (payloadError(validation)) {
+    const code = payloadError(validation);
+    pending.hidden = Boolean(!state.image);
+    image.classList.toggle('waiting-valid', Boolean(state.image));
+    if (!state.image) { image.classList.remove('ready'); skeleton.classList.remove('visible'); }
+    $('#score-text').textContent = errorMessage(code);
+    const required = ({ url: ['value'], text: ['value'], wifi: ['ssid'], vcard: ['name'], email: ['to'], phone: ['value'], sms: ['phone'], whatsapp: ['phone'], geo: ['lat', 'lng'], event: ['title', 'start', 'end'], social: ['value'] })[state.type] || [];
+    $$('#fields [name]').forEach((field) => field.setAttribute('aria-invalid', String(required.includes(field.name) && !String(field.value || '').trim())));
+    return;
+  }
+  $$('#fields [name]').forEach((field) => field.removeAttribute('aria-invalid'));
+  activeRequest = new AbortController(); pending.hidden = true;
+  image.classList.toggle('waiting-valid', Boolean(state.image));
+  if (!state.image) skeleton.classList.add('visible');
   try {
-    const response = await fetch('/api/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: activeRequest.signal, body: JSON.stringify({ type: state.type, data: collect(), foreground: $('#foreground').value, background: $('#background').value, shape: $('#shape').value, correction: $('#correction').value, border: +$('#border').value }) });
-    const result = await response.json(); if (!response.ok) throw Error(result.error?.code || 'ERROR');
-    state.image = `data:image/png;base64,${result.image}`; $('#qr-image').src = state.image; $('#qr-image').classList.add('ready');
+    const response = await fetch('/api/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: activeRequest.signal, body: JSON.stringify({ type: state.type, data, foreground: $('#foreground').value, background: $('#background').value, shape: $('#shape').value, correction: $('#correction').value, border: +$('#border').value }) });
+    const result = await response.json(); if (!response.ok) throw Object.assign(new Error(result.error?.code || 'ERROR'), { status: response.status });
+    if (sequence !== requestSequence) return;
+    state.image = `data:image/png;base64,${result.image}`; image.src = state.image; image.classList.add('ready'); image.classList.remove('waiting-valid');
     $('#qr-version').textContent = `V${result.version} · ${result.modules}×${result.modules}`;
     const contrast = contrastRatio($('#foreground').value, $('#background').value);
     const score = Math.max(0, Math.min(100, Math.round(contrast / 7 * 100) - Math.max(0, result.version - 6) * 3));
     $('#score').textContent = String(score);
     $('#score-text').textContent = contrast < 4.5 ? dict.lowContrast : luminance($('#foreground').value) > luminance($('#background').value) ? dict.invertedWarning : result.version > 8 ? dict.highDensity : dict.assistantReady;
-  } catch (error) { if (error.name !== 'AbortError') $('#score-text').textContent = dict.error; }
-  finally { if (!activeRequest.signal.aborted) $('#qr-skeleton').classList.remove('visible'); }
+  } catch (error) {
+    if (error.name !== 'AbortError' && sequence === requestSequence) {
+      $('#score-text').textContent = error.status === 429 ? dict.errRateLimit : !navigator.onLine ? dict.errOffline : error.name === 'TypeError' ? dict.errNetwork : errorMessage(error.message);
+      if (!state.image) image.classList.remove('ready'); else image.classList.add('waiting-valid');
+    }
+  } finally { if (sequence === requestSequence) skeleton.classList.remove('visible'); }
 }
 function filename(extension) {
   const stamp = new Intl.DateTimeFormat(state.lang === 'tr' ? 'tr-TR' : 'en-US', { dateStyle: 'short' }).format(new Date()).replaceAll('/', '-');
-  return `omniqr-${state.type}-${stamp}.${extension}`;
+  const typeLabel = (dict[state.type] || state.type).normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replaceAll('ı', 'i').replaceAll('İ', 'I').replace(/[^a-zA-Z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').toLowerCase();
+  return `${dict.downloadName || 'omniqr'}-${typeLabel}-${stamp}.${extension}`;
 }
 function download(url, extension) { const anchor = document.createElement('a'); anchor.href = url; anchor.download = filename(extension); anchor.click(); }
 async function exportAsset(format) {
+  const validation = payloadFor(collect());
+  if (validation.error || new TextEncoder().encode(validation.payload || '').length > 1800) { toast(errorMessage(validation.error || 'PAYLOAD_TOO_LONG')); return; }
   try {
     const response = await fetch('/api/export', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: state.type, data: collect(), foreground: $('#foreground').value, background: $('#background').value, shape: $('#shape').value, correction: $('#correction').value, border: +$('#border').value, format, resolution: +$('#resolution').value }) });
-    const result = await response.json(); if (!response.ok) throw Error(result.error?.code || 'ERROR');
+    const result = await response.json(); if (!response.ok) throw Object.assign(new Error(result.error?.code || 'ERROR'), { status: response.status });
+    if (result.file.length > 4_400_000) throw new Error('EXPORT_TOO_LARGE');
     download(`data:${result.mime};base64,${result.file}`, result.extension); vibrate(); if (format === 'png') toast(dict.saved);
-  } catch { toast(dict.error); }
+  } catch (error) { toast(error.status === 429 ? dict.errRateLimit : !navigator.onLine ? dict.errOffline : error.name === 'TypeError' ? dict.errNetwork : errorMessage(error.message)); }
 }
 function toast(text) {
   const element = $('#toast'); element.textContent = text; element.classList.add('show');
@@ -212,15 +317,15 @@ function updateInstallState() {
 }
 function bind() {
   $$('.type-chip').forEach((button) => button.onclick = () => {
-    $('.type-chip.active')?.classList.remove('active'); button.classList.add('active'); state.type = button.dataset.type; renderFields(); generate(); vibrate();
+    captureCurrentForm(); $('.type-chip.active')?.classList.remove('active'); button.classList.add('active'); state.type = button.dataset.type; renderFields(); saveSession(); schedule(); vibrate();
   });
   $$('[data-language]').forEach((button) => button.onclick = async () => { await setLanguage(button.dataset.language); setLanguageControls(state.lang); });
   $('#foreground').oninput = (event) => { event.target.nextElementSibling.textContent = event.target.value.toUpperCase(); schedule(); };
   $('#background').oninput = (event) => { event.target.nextElementSibling.textContent = event.target.value.toUpperCase(); schedule(); };
   ['shape', 'correction', 'border'].forEach((id) => $(`#${id}`).addEventListener('input', () => { if (id === 'border') $('#border-value').value = $('#border').value; schedule(); }));
   $('#download').onclick = () => exportAsset('png'); $('#action-download').onclick = () => exportAsset('png');
-  $('#copy-image').onclick = async () => { try { const blob = await (await fetch(state.image)).blob(); await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]); toast(dict.copied); vibrate(); } catch { toast(dict.error); } };
-  $('#share').onclick = async () => { try { const blob = await (await fetch(state.image)).blob(); const file = new File([blob], filename('png'), { type: 'image/png' }); if (navigator.share) await navigator.share({ files: [file], title: 'OmniQR Studio' }); else await exportAsset('png'); } catch { /* user cancelled native share */ } };
+  $('#copy-image').onclick = async () => { const invalid = payloadError(payloadFor(collect())); if (!state.image || invalid || $('#qr-image').classList.contains('waiting-valid')) { toast(errorMessage(invalid || 'MISSING_VALUE')); return; } try { const blob = await (await fetch(state.image)).blob(); await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]); toast(dict.copied); vibrate(); } catch { toast(dict.error); } };
+  $('#share').onclick = async () => { const invalid = payloadError(payloadFor(collect())); if (!state.image || invalid || $('#qr-image').classList.contains('waiting-valid')) { toast(errorMessage(invalid || 'MISSING_VALUE')); return; } try { const blob = await (await fetch(state.image)).blob(); const file = new File([blob], filename('png'), { type: 'image/png' }); if (navigator.share) await navigator.share({ files: [file], title: dict.footerBrandName }); else await exportAsset('png'); } catch { /* user cancelled native share */ } };
   $$('[data-export]').forEach((button) => button.onclick = () => exportAsset(button.dataset.export));
   $('#style-toggle').onclick = () => { const panel = $('#style-controls'); panel.hidden = !panel.hidden; $('#style-toggle').setAttribute('aria-expanded', String(!panel.hidden)); $('#style-toggle').textContent = panel.hidden ? dict.expand : dict.collapse; };
   $('#theme-toggle').onclick = () => $('#theme-popover').hidden ? openThemePopover() : closeThemePopover();
@@ -229,7 +334,7 @@ function bind() {
   $('#theme-choice').onchange = (event) => applyTheme(event.target.value);
   $('#mobile-theme-trigger').onclick = () => { const options = $('#mobile-theme-options'); options.hidden = !options.hidden; $('#mobile-theme-trigger').setAttribute('aria-expanded', String(!options.hidden)); };
   $('#accent-picker').oninput = (event) => setAccent(event.target.value); $('#mobile-accent-picker').oninput = (event) => setAccent(event.target.value);
-  $('#favorite').onclick = () => { const favorites = JSON.parse(localStorage.getItem('omniqr-favorites') || '[]'); favorites.push({ type: state.type, data: collect(), time: Date.now() }); localStorage.setItem('omniqr-favorites', JSON.stringify(favorites.slice(-30))); $('#favorite').textContent = '★'; toast(dict.favorite); };
+  $('#favorite').onclick = () => { const favorites = JSON.parse(localStorage.getItem('omniqr-favorites') || '[]'); const data = collect(); if (state.type === 'wifi') delete data.password; favorites.push({ type: state.type, data, time: Date.now() }); localStorage.setItem('omniqr-favorites', JSON.stringify(favorites.slice(-30))); $('#favorite').textContent = '★'; toast(dict.favorite); };
   $('#menu-button').onclick = () => $('#mobile-sheet').classList.contains('open') ? closeMenu() : openMenu(); $('#menu-close').onclick = () => closeMenu(); $('#menu-backdrop').onclick = () => closeMenu();
   $$('a[href^="#"]').forEach((link) => link.addEventListener('click', (event) => {
     const target = $(link.getAttribute('href'));
@@ -277,13 +382,16 @@ window.addEventListener('beforeinstallprompt', (event) => { event.preventDefault
 window.addEventListener('appinstalled', () => { $('#install').hidden = true; $('#mobile-install').hidden = true; $('#footer-install').hidden = true; });
 $('#language').value = detectLanguage();
 setLanguage(detectLanguage()).then(() => {
+  scrubFavoriteWifiPasswords();
   $('.type-chip.active')?.classList.remove('active'); $(`.type-chip[data-type="${state.type}"]`)?.classList.add('active');
-  bind(); setLanguageControls(state.lang); $('#foreground').dispatchEvent(new Event('input'));
+  bind(); setLanguageControls(state.lang);
   $('#qr-form').addEventListener('input', schedule); $('#qr-form').addEventListener('submit', (event) => event.preventDefault());
   $('#year').textContent = new Date().getFullYear();
   const savedTheme = localStorage.getItem('omniqr-theme') || 'paper'; applyTheme(savedTheme);
+  Object.entries(state.appearance).forEach(([id, value]) => { const control = $(`#${id}`); if (control && value !== undefined) control.value = value; });
+  $('#foreground').nextElementSibling.textContent = $('#foreground').value.toUpperCase(); $('#background').nextElementSibling.textContent = $('#background').value.toUpperCase(); $('#border-value').value = $('#border').value;
   matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (document.body.dataset.theme === 'system') updateLogoTone('system'); });
-  setAccent(localStorage.getItem('omniqr-accent') || '#ba4c32'); updateInstallState();
+  setAccent(localStorage.getItem('omniqr-accent') || '#ba4c32'); updateInstallState(); saveSession();
   if (matchMedia('(display-mode: standalone)').matches) { $('#install').hidden = true; $('#mobile-install').hidden = true; $('#footer-install').hidden = true; }
   generate();
   if (location.hash) navigateTo(location.hash, { updateHash: false });
